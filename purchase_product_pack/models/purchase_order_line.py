@@ -82,9 +82,13 @@ class PurchaseOrderLine(models.Model):
     def create(self, vals_list):
         new_vals = []
         res = self.browse()
-        prod_ids = [vals["product_id"] for vals in vals_list]
-        products = self.env["product.product"].browse(prod_ids)
-        for line_vals, product in zip(vals_list, products):
+        # Section/note lines (display_type set) have no product_id, so use
+        # ``.get`` to avoid a KeyError and map products back by id.
+        prod_ids = [vals.get("product_id") for vals in vals_list]
+        products = self.env["product.product"].browse(pid for pid in prod_ids if pid)
+        products_by_id = {product.id: product for product in products}
+        for line_vals in vals_list:
+            product = products_by_id.get(line_vals.get("product_id"))
             if product and product.pack_ok and product.pack_type != "non_detailed":
                 line = super().create([line_vals])
                 line.expand_pack_line()
