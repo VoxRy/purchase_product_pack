@@ -25,12 +25,10 @@ class ProductPackLine(models.Model):
         pol._onchange_quantity()
         pol.onchange_product_id_warning()
         vals = pol._convert_to_write(pol._cache)
-        pack_price_types = {"totalized", "ignored"}
-        if (
-            line.product_id.pack_type == "detailed"
-            and line.product_id.pack_component_price in pack_price_types
-        ):
-            vals["price_unit"] = 0.0
+        # On purchase orders we keep the computed unit price on every component
+        # line (we do not force it to 0.0 for "totalized"/"ignored" packs) so
+        # each purchased component carries its own price and no line is left at
+        # 0.00, which would be rejected by "no zero unit price" validations.
         vals.update(
             {
                 "name": "{}{}".format(
