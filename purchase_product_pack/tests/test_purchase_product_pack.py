@@ -3,21 +3,14 @@
 
 from odoo.tests.common import TransactionCase
 
+from odoo.addons.base.tests.common import DISABLED_MAIL_CONTEXT
+
 
 class TestPurchaseProductPack(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.env = cls.env(
-            context=dict(
-                cls.env.context,
-                mail_create_nolog=True,
-                mail_create_nosubscribe=True,
-                mail_notrack=True,
-                no_reset_password=True,
-                tracking_disable=True,
-            )
-        )
+        cls.env = cls.env(context=dict(cls.env.context, **DISABLED_MAIL_CONTEXT))
         cls.purchase_order = cls.env["purchase.order"].create(
             {
                 "partner_id": cls.env.ref("base.res_partner_12").id,
@@ -227,7 +220,7 @@ class TestPurchaseProductPack(TransactionCase):
                         0,
                         0,
                         {
-                            "name": self.env.ref("base.res_partner_12").id,
+                            "partner_id": self.env.ref("base.res_partner_12").id,
                             "min_qty": 1.0,
                             "price": 25.0,
                         },
@@ -243,7 +236,7 @@ class TestPurchaseProductPack(TransactionCase):
                         0,
                         0,
                         {
-                            "name": self.env.ref("base.res_partner_12").id,
+                            "partner_id": self.env.ref("base.res_partner_12").id,
                             "min_qty": 1.0,
                             "price": 15.0,
                         },
@@ -276,7 +269,7 @@ class TestPurchaseProductPack(TransactionCase):
                         0,
                         0,
                         {
-                            "name": self.env.ref("base.res_partner_12").id,
+                            "partner_id": self.env.ref("base.res_partner_12").id,
                             "min_qty": 1.0,
                             "price": 15.0,
                         },

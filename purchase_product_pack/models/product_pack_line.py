@@ -18,17 +18,11 @@ class ProductPackLine(models.Model):
             "pack_depth": line.pack_depth + 1,
             "company_id": order.company_id.id,
             "pack_modifiable": line.product_id.pack_modifiable,
+            "product_qty": quantity,
         }
         pol = line.new(line_vals)
-        pol.onchange_product_id()
-        pol.product_qty = quantity
-        pol._onchange_quantity()
         pol.onchange_product_id_warning()
         vals = pol._convert_to_write(pol._cache)
-        # For "totalized"/"ignored" packs the whole price is carried by the pack
-        # parent line (see purchase_order_line._onchange_quantity), so the
-        # component lines are forced to 0.0 to avoid double counting the price.
-        # For "detailed" packs each component keeps its own computed price.
         pack_price_types = {"totalized", "ignored"}
         if (
             line.product_id.pack_type == "detailed"

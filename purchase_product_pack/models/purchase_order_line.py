@@ -82,13 +82,9 @@ class PurchaseOrderLine(models.Model):
     def create(self, vals_list):
         new_vals = []
         res = self.browse()
-        # Section/note lines (display_type set) have no product_id, so use
-        # ``.get`` to avoid a KeyError and map products back by id.
-        prod_ids = [vals.get("product_id") for vals in vals_list]
-        products = self.env["product.product"].browse(pid for pid in prod_ids if pid)
-        products_by_id = {product.id: product for product in products}
-        for line_vals in vals_list:
-            product = products_by_id.get(line_vals.get("product_id"))
+        prod_ids = [vals["product_id"] for vals in vals_list]
+        products = self.env["product.product"].browse(prod_ids)
+        for line_vals, product in zip(vals_list, products):
             if product and product.pack_ok and product.pack_type != "non_detailed":
                 line = super().create([line_vals])
                 line.expand_pack_line()
@@ -138,87 +134,58 @@ class PurchaseOrderLine(models.Model):
 
     @api.onchange("product_qty", "product_uom", "company_id")
     def _onchange_quantity(self):
-        """
-        This method extends the base '_onchange_quantity' to re-calculate the
-        price unit following options on product-pack
+        """Odoo 15 sets ``price_unit`` through this onchange (not through a
+        compute like in v16). We extend it to overwrite the pack parent line
+        price with the totalized cost of its components, so a pack whose vendor
+        price lives on the components does not end up with a 0 unit price.
         """
         res = super()._onchange_quantity()
-        if not self.product_id or self.invoice_lines:
-            return res
+        self._apply_pack_price_unit()
+        return res
 
-        params = {"order_id": self.order_id}
-        seller = self.product_id._select_seller(
-            partner_id=self.partner_id,
-            quantity=self.product_qty,
-            date=self.order_id.date_order and self.order_id.date_order.date(),
-            uom_id=self.product_uom,
-            params=params,
-        )
+    def _apply_pack_price_unit(self):
+        """Recompute ``price_unit`` for pack parent lines from their component
+        costs. Only affects products flagged as packs (``pack_cost_compute``
+        returns nothing for regular products and for pack components)."""
+        for line in self:
+            if not line.product_id or line.invoice_lines:
+                continue
 
-        prices = self.product_id.pack_cost_compute(self)
-        # If not prices, no need to re-calculate the price units
-        if not prices:
-            return res
-        cost = prices[self.product_id.id]
-        # If not seller, use the standard price. It needs a proper currency conversion.
-        if not seller:
-            unavailable_seller = self.product_id.seller_ids.filtered(
-                lambda s: s.name == self.order_id.partner_id
+            prices = line.product_id.pack_cost_compute(line)
+            # If not prices, this is not a pack line: keep the standard price.
+            if not prices:
+                continue
+            cost = prices[line.product_id.id]
+
+            params = {"order_id": line.order_id}
+            seller = line.product_id._select_seller(
+                partner_id=line.partner_id,
+                quantity=line.product_qty,
+                date=line.order_id.date_order and line.order_id.date_order.date(),
+                uom_id=line.product_uom,
+                params=params,
             )
-            if (
-                not unavailable_seller
-                and self.price_unit
-                and self.product_uom == self._origin.product_uom
-            ):
-                # Avoid to modify the price unit if there is no price list
-                # for this partner and
-                # the line has already one to avoid to override unit price set manually.
-                return res
-            po_line_uom = self.product_uom or self.product_id.uom_po_id
-            # Using new cost to compute the price_unit
-            price_unit = self.env["account.tax"]._fix_tax_included_price_company(
-                self.product_id.uom_id._compute_price(cost, po_line_uom),
-                self.product_id.supplier_taxes_id,
-                self.taxes_id,
-                self.company_id,
+            currency = seller.currency_id if seller else line.product_id.currency_id
+            po_line_uom = line.product_uom or line.product_id.uom_po_id
+
+            price_unit = line.env["account.tax"]._fix_tax_included_price_company(
+                line.product_id.uom_id._compute_price(cost, po_line_uom),
+                line.product_id.supplier_taxes_id,
+                line.taxes_id,
+                line.company_id,
             )
-            price_unit = self.product_id.currency_id._convert(
-                price_unit,
-                self.currency_id,
-                self.company_id,
-                self.date_order,
-                False,
-            )
-            self.price_unit = float_round(
+            if currency and line.currency_id and currency != line.currency_id:
+                price_unit = currency._convert(
+                    price_unit,
+                    line.currency_id,
+                    line.company_id or self.env.company,
+                    line.date_order or fields.Date.today(),
+                    False,
+                )
+            line.price_unit = float_round(
                 price_unit,
                 precision_digits=max(
-                    self.currency_id.decimal_places,
+                    line.currency_id.decimal_places,
                     self.env["decimal.precision"].precision_get("Product Price"),
                 ),
             )
-            return res
-        # Using new cost to compute the price unit
-        price_unit = (
-            self.env["account.tax"]._fix_tax_included_price_company(
-                cost,
-                self.product_id.supplier_taxes_id,
-                self.taxes_id,
-                self.company_id,
-            )
-            if seller
-            else 0.0
-        )
-        price_unit = seller.currency_id._convert(
-            price_unit, self.currency_id, self.company_id, self.date_order, False
-        )
-        price_unit = float_round(
-            price_unit,
-            precision_digits=max(
-                self.currency_id.decimal_places,
-                self.env["decimal.precision"].precision_get("Product Price"),
-            ),
-        )
-        self.price_unit = seller.product_uom._compute_price(
-            price_unit, self.product_uom
-        )
-        return res
